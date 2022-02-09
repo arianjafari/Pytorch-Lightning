@@ -17,6 +17,7 @@ PATH_DATASETS = os.environ.get("PATH_DATASETS", ".")
 AVAIL_GPUS = min(1, torch.cuda.device_count())
 BATCH_SIZE = 256 if AVAIL_GPUS else 64
 NUM_WORKERS = int(os.cpu_count() / 2)
+IMAGE_SIZE = 64
 
 class MNISTDataModule(pl.LightningDataModule):
     def __init__(
@@ -24,23 +25,26 @@ class MNISTDataModule(pl.LightningDataModule):
         data_dir: str = PATH_DATASETS,
         batch_size = BATCH_SIZE,
         num_workers: int = NUM_WORKERS,
+        IMAGE_SIZE: int = IMAGE_SIZE
     ):
         super().__init__()
         self.data_dir = data_dir
         self.batch_size = batch_size
         self.num_workers = num_workers
+        self.IMAGE_SIZE = IMAGE_SIZE
         
         self.transform = transforms.Compose(
             [
+                transforms.Resize(self.IMAGE_SIZE),
                 transforms.ToTensor(),
-                transforms.Normalize((0.1307,), (0.3081,)),
+                transforms.Normalize((0.5,), (0.5,)),
             ]
         )
         
         # self.dims is returned when you call dm.size()
         # Setting default dims here because we know them.
         # Could optionally be assigned dynamically in dm.setup()
-        self.dims = (1, 28, 28)
+        self.dims = (1, self.IMAGE_SIZE, self.IMAGE_SIZE)
         self.num_classes = 10
         
     def prepare_data(self):
@@ -87,16 +91,19 @@ class DCGAN(pl.LightningModule):
         
         # networks
         data_shape = (channels, width, height)
-        self.generator = Generator(channels_noise = channels_noise,\
+        self.gen = Generator(channels_noise = channels_noise,\
                                    channels_img = channels, features_g = features_g)
-        self.discriminator = Discriminator(channels_img = channels, features_d = features_d)
+        self.disc = Discriminator(channels_img = channels, features_d = features_d)
+        
+        initialize_weights(self.gen)
+        initialize_weights(self.disc)
         
         # N x channels_noise x 1 x 1
         self.validation_z = torch.randn(8, self.hparams.channels_noise, 1, 1)
         self.example_input_array = torch.zeros(2, self.hparams.channels_noise, 1, 1)
         
     def forward(self, z):
-        return self.generator(z)
+        return self.gen(z)
         
     def adversarial_loss(self, y_hat, y):
 
@@ -104,79 +111,60 @@ class DCGAN(pl.LightningModule):
         return criterion(y_hat, y)
         
     def training_step(self, batch, batch_idx, optimizer_idx):
-        imgs, _ = batch
+        real, _ = batch
 
         # sample noise
-        z = torch.randn(imgs.shape[0], self.hparams.channels_noise, 1, 1)
-        z = z.type_as(imgs)
-
-        # train generator
-        if optimizer_idx == 0:
-
-            # generate images
-            self.generated_imgs = self(z)
-
-            # log samples images
-            sample_imgs = self.generated_imgs[:6]
-            grid = torchvision.utils.make_grid(sample_imgs)
-            self.logger.experiment.add_image("generated_images", grid, 0)
-
-            # ground truth result (ie: all fake)
-            # put on GPU because we created this tensor inside training_loop
-
-            # adversarial loss is binary cross-entropy
-            output = self.discriminator(self(z)).reshape(-1)
-            valid = torch.ones_like(output)
-            valid = valid.type_as(output)
-            
-            g_loss = self.adversarial_loss(output, valid)
-            tqdm_dict = {"g_loss": g_loss}
-            output = OrderedDict({"loss": g_loss, "progress_bar": tqdm_dict, "log": tqdm_dict})
-            return output
-
+        z = torch.randn(real.shape[0], self.hparams.channels_noise, 1, 1)
+        z = z.type_as(real)
+        fake = self(z)
+        
         # train discriminator
-        if optimizer_idx == 1:
+        if optimizer_idx == 0:
             # Measure discriminator's ability to classify real from generated samples
             # how well can it label as real?
             
-            disc_real = self.discriminator(imgs).reshape(-1)
-            valid = torch.ones_like(disc_real)
-            valid = valid.type_as(disc_real)
-
-            real_loss = self.adversarial_loss(disc_real, valid)
-
-            # how well can it label as fake?
             
-            disc_fake = self.discriminator(self(z).detach()).reshape(-1)
-            fake = torch.zeros_like(disc_fake)
-            fake = fake.type_as(disc_fake)
+            disc_real = self.disc(real).reshape(-1)
+            loss_disc_real = self.adversarial_loss(disc_real, torch.ones_like(disc_real).type_as(disc_real))
+            disc_fake = self.disc(fake.detach()).reshape(-1)
+            loss_disc_fake = self.adversarial_loss(disc_fake, torch.zeros_like(disc_fake).type_as(disc_fake))
+            
+            loss_disc = (loss_disc_real + loss_disc_fake) / 2
 
-            fake_loss = self.adversarial_loss(disc_fake, fake)
-
-            # discriminator loss is the average of these
-            d_loss = (real_loss + fake_loss) / 2
-            tqdm_dict = {"d_loss": d_loss}
-            output = OrderedDict({"loss": d_loss, "progress_bar": tqdm_dict, "log": tqdm_dict})
+            tqdm_dict = {"d_loss": loss_disc}
+            output = OrderedDict({"loss": loss_disc, "progress_bar": tqdm_dict, "log": tqdm_dict})
             return output
+
+        # train generator
+        if optimizer_idx == 1:
+
+            # adversarial loss is binary cross-entropy
+            output = self.disc(fake).reshape(-1)
+            loss_gen = self.adversarial_loss(output, torch.ones_like(output).type_as(output))
+            
+            tqdm_dict = {"g_loss": loss_gen}
+            output = OrderedDict({"loss": loss_gen, "progress_bar": tqdm_dict, "log": tqdm_dict})
+            return output
+
+        
     
     def configure_optimizers(self):
         lr = self.hparams.lr
         b1 = self.hparams.b1
         b2 = self.hparams.b2
         
-        opt_g = torch.optim.Adam(self.generator.parameters(), lr = lr, betas = (b1,b2))
-        opt_d = torch.optim.Adam(self.discriminator.parameters(), lr=lr, betas=(b1, b2))
+        opt_g = torch.optim.Adam(self.gen.parameters(), lr = lr, betas = (b1,b2))
+        opt_d = torch.optim.Adam(self.disc.parameters(), lr=lr, betas=(b1, b2))
         
-        return [opt_g, opt_d], []
+        return [opt_d, opt_g], []
     
     def on_epoch_end(self):
-        z = self.validation_z.type_as(self.generator.gen[0][0].weight)
+        z = self.validation_z.type_as(self.gen.net[0][0].weight)
         
         # log samples images
         sample_imgs = self(z)
         grid = torchvision.utils.make_grid(sample_imgs)
-        self.logger.experiment.add_image("generated_images", grid, self.current_epoch)
-
+        self.logger.experiment.add_image("generated_images", grid, self.current_epoch) 
 
 
 if __name__ == '__main__':

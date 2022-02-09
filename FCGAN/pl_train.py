@@ -71,7 +71,7 @@ class MNISTDataModule(pl.LightningDataModule):
         return DataLoader(self.mnist_test, batch_size = self.batch_size, num_workers = self.num_workers,)
 
 
-class DCGAN(pl.LightningModule):
+class FCGAN(pl.LightningModule):
     def __init__(self,
                  channels,
                  width,
@@ -164,6 +164,6 @@ class DCGAN(pl.LightningModule):
 
 if __name__ == '__main__':
 	dm = MNISTDataModule()
-	model = DCGAN(*dm.size())
+	model = FCGAN(*dm.size())
 	trainer = Trainer(gpus=AVAIL_GPUS, max_epochs=50, progress_bar_refresh_rate=20)
 	trainer.fit(model, dm)

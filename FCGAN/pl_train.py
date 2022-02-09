@@ -37,7 +37,7 @@ class MNISTDataModule(pl.LightningDataModule):
         self.transform = transforms.Compose(
             [
                 transforms.ToTensor(),
-                transforms.Normalize((0.1307,), (0.3081,)),
+                transforms.Normalize((0.5,), (0.5,)),
             ]
         )
         
@@ -66,10 +66,11 @@ class MNISTDataModule(pl.LightningDataModule):
     
     def val_dataloader(self):
         return DataLoader(self.mnist_val, batch_size = self.batch_size, num_workers = self.num_workers,)
+    
     def test_dataloader(self):
         return DataLoader(self.mnist_test, batch_size = self.batch_size, num_workers = self.num_workers,)
-      
-      
+
+
 class DCGAN(pl.LightningModule):
     def __init__(self,
                  channels,
@@ -87,100 +88,82 @@ class DCGAN(pl.LightningModule):
         
         # networks
         data_shape = (channels, width, height)
-        self.generator = Generator(z_dim = z_dim, img_dim = np.prod(data_shape))
-        self.discriminator = Discriminator(in_features = np.prod(data_shape))
+        self.gen = Generator(z_dim = z_dim, img_dim = np.prod(data_shape))
+        self.disc = Discriminator(in_features = np.prod(data_shape))
         
         # N x channels_noise 
         self.validation_z = torch.randn(8, self.hparams.z_dim)
         self.example_input_array = torch.zeros(2, self.hparams.z_dim)
         
     def forward(self, z):
-        return self.generator(z)
+        return self.gen(z)
         
-    def adversarial_loss(self, y_hat, y):
+    def adv_loss(self, y_hat, y):
 
         criterion = nn.BCELoss()
         return criterion(y_hat, y)
         
     def training_step(self, batch, batch_idx, optimizer_idx):
-        imgs, _ = batch
-        imgs = imgs.view(-1, self.hparams.width * self.hparams.height)
+        real, _ = batch
+        real = real.view(-1, self.hparams.width * self.hparams.height)
 
         # sample noise
-        z = torch.randn(imgs.shape[0], self.hparams.z_dim)
-        z = z.type_as(imgs)
+        z = torch.randn(real.shape[0], self.hparams.z_dim)
+        z = z.type_as(real)
+        fake = self(z)
+        
+        # train discriminator
+        if optimizer_idx == 0:
+            # Measure discriminator's ability to classify real from generated samples
+            # how well can it label as real?
+            
+            disc_real = self.disc(real).view(-1)
+            loss_disc_real = self.adv_loss(disc_real, torch.ones_like(disc_real).type_as(disc_real))
+            disc_fake = self.disc(fake.detach()).view(-1)
+            loss_disc_fake = self.adv_loss(disc_fake, torch.zeros_like(disc_fake).type_as(disc_fake))
+            
+            loss_disc = (loss_disc_real + loss_disc_fake) / 2
+       
+            tqdm_dict = {"d_loss": loss_disc}
+            output = OrderedDict({"loss": loss_disc, "progress_bar": tqdm_dict, "log": tqdm_dict})
+            return output
 
         # train generator
-        if optimizer_idx == 0:
-
-            # generate images
-            self.generated_imgs = self(z)
-
-            # log samples images
-            sample_imgs = self.generated_imgs[:6]
-            grid = torchvision.utils.make_grid(sample_imgs)
-            self.logger.experiment.add_image("generated_images", grid, 0)
-
-            # ground truth result (ie: all fake)
-            # put on GPU because we created this tensor inside training_loop
+        if optimizer_idx == 1:
 
             # adversarial loss is binary cross-entropy
-            output = self.discriminator(self(z)).reshape(-1)
-            valid = torch.ones_like(output)
-            valid = valid.type_as(output)
+            output = self.disc(fake).view(-1)
             
-            g_loss = self.adversarial_loss(output, valid)
+            g_loss = self.adv_loss(output, torch.ones_like(output).type_as(output))
             tqdm_dict = {"g_loss": g_loss}
             output = OrderedDict({"loss": g_loss, "progress_bar": tqdm_dict, "log": tqdm_dict})
             return output
 
-        # train discriminator
-        if optimizer_idx == 1:
-            # Measure discriminator's ability to classify real from generated samples
-            # how well can it label as real?
-            
-            disc_real = self.discriminator(imgs).reshape(-1)
-            valid = torch.ones_like(disc_real)
-            valid = valid.type_as(disc_real)
-
-            real_loss = self.adversarial_loss(disc_real, valid)
-
-            # how well can it label as fake?
-            
-            disc_fake = self.discriminator(self(z).detach()).reshape(-1)
-            fake = torch.zeros_like(disc_fake)
-            fake = fake.type_as(disc_fake)
-
-            fake_loss = self.adversarial_loss(disc_fake, fake)
-
-            # discriminator loss is the average of these
-            d_loss = (real_loss + fake_loss) / 2
-            tqdm_dict = {"d_loss": d_loss}
-            output = OrderedDict({"loss": d_loss, "progress_bar": tqdm_dict, "log": tqdm_dict})
-            return output
+        
     
     def configure_optimizers(self):
         lr = self.hparams.lr
         b1 = self.hparams.b1
         b2 = self.hparams.b2
         
-        opt_g = torch.optim.Adam(self.generator.parameters(), lr = lr, betas = (b1,b2))
-        opt_d = torch.optim.Adam(self.discriminator.parameters(), lr=lr, betas=(b1, b2))
+        opt_g = torch.optim.Adam(self.gen.parameters(), lr = lr, betas = (b1,b2))
+        opt_d = torch.optim.Adam(self.disc.parameters(), lr=lr, betas=(b1, b2))
         
-        return [opt_g, opt_d], []
+        return [opt_d, opt_g], []
     
     def on_epoch_end(self):
-        z = self.validation_z.type_as(self.generator.gen[0].weight)
+        z = self.validation_z.type_as(self.gen.gen[0].weight)
         
         # log samples images
         sample_imgs = self(z)
+        torch.save(sample_imgs, 'sample_imgs.pt')
         grid = torchvision.utils.make_grid(sample_imgs)
         self.logger.experiment.add_image("generated_images", grid, self.current_epoch) 
-        
-        
+
+
+
 if __name__ == '__main__':
-  
-  dm = MNISTDataModule()
-  model = DCGAN(*dm.size())
-  trainer = Trainer(gpus=AVAIL_GPUS, max_epochs=50, progress_bar_refresh_rate=20)
-  trainer.fit(model, dm)
+	dm = MNISTDataModule()
+	model = DCGAN(*dm.size())
+	trainer = Trainer(gpus=AVAIL_GPUS, max_epochs=50, progress_bar_refresh_rate=20)
+	trainer.fit(model, dm)

@@ -1,0 +1,57 @@
+name: intSur
+
+conda_env: intuitive.yaml
+
+entry_points:
+
+    prepare_trainData:
+        parameters:
+            step:        {type: str, default: train} 
+            video_path:  {type: str, default: ./Release_v1/videos/fps1/}
+            ann_path:    {type: str, default: ./Release_v1/annotations/bounding_box_gt}
+            frame_path : {type: str, default: ./Release_v1/frames/}
+
+        command: "python video_to_frames.py \
+                  --step {step}\
+                  --video_path {video_path} \
+                  --ann_path {ann_path}\
+                  --frame_path {frame_path}"
+    
+    prepare_testData:
+        parameters:
+            step:        {type: str, default: test} 
+            video_path:  {type: str, default: ./Release_Test/videos/fps1/}
+            frame_path : {type: str, default: ./Release_Test/frames/}
+
+        command: "python video_to_frames.py \
+                  --step {step}\
+                  --video_path {video_path} \
+                  --frame_path {frame_path}"
+
+    train:
+        parameters: 
+            epoch :           {type: int, default: 30}
+            batch_size:       {type: int, default: 4}
+            train_path:       {type: str, default: ./Release_v1/frames/}
+            test_path:        {type: str, default: ./Release_Test/frames/}
+            checkpoint_path : {type: str, default: ./pl_models/Intuitive/checkpoint/}
+        
+        command: "python train.py \
+                  --train_path {train_path} \
+                  --test_path {test_path} \
+                  --checkpoint_path {checkpoint_path} \
+                  --epoch {epoch} \
+                  --batch_size {batch_size}"
+
+    predict:
+        parameters: 
+            batch_size:       {type: int, default: 16}
+            test_path:        {type: str, default: ./Release_Test/frames/}
+            checkpoint_path : {type: str, default: ./pl_models/Intuitive/checkpoint/}
+            best_model:       {type: str, default: epoch=15-step=24351.ckpt}
+        
+        command: "python predict.py \
+                  --test_path {test_path} \
+                  --checkpoint_path {checkpoint_path} \
+                  --best_model {best_model} \
+                  --batch_size {batch_size}"

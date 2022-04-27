@@ -20,5 +20,5 @@ $ conda activate mlflow-launcher
 Then you can run then entrypoints contained in  `MLproject`, e.g., 
 
 ```bash
-$ mlflow run -e predict .
+$ mlflow run -P test_path=./Release_Test/frames/ checkpoint_path=./pl_models/Intuitive/checkpoint/ best_model=epoch=15-step=24351.ckpt batch_size=16 -e predict .
 ```

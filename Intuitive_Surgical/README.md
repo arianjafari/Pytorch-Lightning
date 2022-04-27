@@ -23,7 +23,7 @@ Then you can run then entrypoints contained in  `MLproject`, e.g.,
 $ mlflow run -P test_path=./Release_Test/frames/ checkpoint_path=./pl_models/Intuitive/checkpoint/ best_model=epoch=15-step=24351.ckpt batch_size=16 -e predict .
 ```
 
-# Pipeline steps
+# ML Pipeline steps
 
 1) ```mlflow run -e prepare_trainData .``` This step converts all the `mp4` files in `Release_v1/videos` to separate frames and saved them in `Release_v1/frames` as `npz` format along their labels for the training step
 2) ```mlflow run -e prepare_testData .``` This step converts all the `mp4` files in `Release_Test/videos` to separate frames and saved them in `Release_Test/frames` as `npz` format along their labels (negative one by default) for the test/predict step

@@ -25,4 +25,7 @@ $ mlflow run -P test_path=./Release_Test/frames/ checkpoint_path=./pl_models/Int
 
 # Pipeline steps
 
-1) ```bash $ mlflow run -e prepare_trainData```
+1) ```mlflow run -e prepare_trainData .```
+2) ```mlflow run -e prepare_testData .```
+3) ```mlflow run -e train .```
+4) ```mlflow run -e predict .```

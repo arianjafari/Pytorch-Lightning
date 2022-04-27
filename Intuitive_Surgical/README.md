@@ -25,7 +25,7 @@ $ mlflow run -P test_path=./Release_Test/frames/ checkpoint_path=./pl_models/Int
 
 # Pipeline steps
 
-1) ```mlflow run -e prepare_trainData .```
-2) ```mlflow run -e prepare_testData .```
-3) ```mlflow run -e train .```
-4) ```mlflow run -e predict .```
+1) ```mlflow run -e prepare_trainData .``` This step converts all the `mp4` files in `Release_v1/videos` to separate frames and saved them in `Release_v1/frames` as `npz` format along their labels for the training step
+2) ```mlflow run -e prepare_testData .``` This step converts all the `mp4` files in `Release_Test/videos` to separate frames and saved them in `Release_Test/frames` as `npz` format along their labels (negative one by default) for the test/predict step
+3) ```mlflow run -e train .``` This step loads the processed data in step 1 and feed them to the ML model for training.
+4) ```mlflow run -e predict .``` This step loads the processed data in step 2 and feed them to the ML model in eval mode for prediction.

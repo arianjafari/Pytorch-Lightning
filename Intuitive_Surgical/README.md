@@ -22,3 +22,7 @@ Then you can run then entrypoints contained in  `MLproject`, e.g.,
 ```bash
 $ mlflow run -P test_path=./Release_Test/frames/ checkpoint_path=./pl_models/Intuitive/checkpoint/ best_model=epoch=15-step=24351.ckpt batch_size=16 -e predict .
 ```
+
+# Pipeline steps
+
+1) ```bash $ mlflow run -e prepare_trainData```

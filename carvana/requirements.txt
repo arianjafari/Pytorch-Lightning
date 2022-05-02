@@ -1,2 +1,1 @@
-pytorch-lightning == 1.2.8
-torch == 1.10.2
+mlflow==1.14.1

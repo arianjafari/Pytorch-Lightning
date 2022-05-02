@@ -40,18 +40,18 @@ else:
 parser = argparse.ArgumentParser()
 parser.add_argument("--checkpoint_path", default = "./pl_models/Carvana/checkpoint",\
                     help="checkpoint dir to store the best model")
-parser.add_argument("--epoch", default = 5, help="number of epoch")
 parser.add_argument("--csv_path", default = "customer_chat_sample.csv")
+parser.add_argument("--best_model", help="best model ckpt")
 parser.add_argument("--batch_size", default = 1, help="batch_size")
 
 args = parser.parse_args(sys.argv[1:])
 
 datapath = args.csv_path
+best_model = args.best_model
 batch_size = int(args.batch_size)
-MAX_EPOCH = int(args.epoch)
 
 NUM_Cls = 8
-# LR = 1e-6
+
 
 
 # Initializing the tokenizer from pretrained BertTokenizer
@@ -287,145 +287,71 @@ class LightningBertClassifier(pl.LightningModule):
 
 
 
-# Train function
-def train(lr, batch_size):
+model = LightningBertClassifier()
 
-    checkpoint_path = args.checkpoint_path
-
-    
-    print(f"LR = {lr}, BSIZE = {batch_size}")
-    checkpoint_path = checkpoint_path + f"_ADAM_lr={lr}_bSize={batch_size}"
-    
-    checkpoint_callback = ModelCheckpoint(
-        dirpath = checkpoint_path,
-        save_top_k = 1,
-        save_weights_only = True,
-        verbose = True,
-        monitor = "val_loss",
-        mode = "min"
-    )
-    
-    # learning_rate monitor to reduce the lr if the val_loss hasn't been improved
-    lr_monitor = LearningRateMonitor(logging_interval='epoch')
-    
-    # Tensorboard logger
-    logger = TensorBoardLogger("lightning_logs", name = f"Carvana_lr={lr}_bSize={batch_size}")
-    
-    # Stop training if the val_loss is increasing for 4 consecutive epochs
-    early_stopping_callback = EarlyStopping(monitor="val_loss", patience=4)
+checkpoint_path = args.checkpoint_path
+saved_path = os.path.join(checkpoint_path, best_model)
+model.load_from_checkpoint(saved_path)
+model.eval()
+trainer = Trainer(gpus = GPU)
 
 
-    data_module = CarvanaDataModule(df_train, df_val, df_test, batch_size = batch_size, shuffle = True)
+data_module = CarvanaDataModule(df_train, df_val, df_test, batch_size = batch_size, shuffle = True)
+data_module.setup(stage = "predict")
+test_module = data_module.test_dataloader()
 
-    data_module.setup()
+pred_test = trainer.predict(model, dataloaders = test_module) # 
 
-    # train
-    model = LightningBertClassifier(LR = lr, cls_weight = weights)
-    trainer = Trainer(
-        logger = logger,
-        max_epochs = MAX_EPOCH,
-        callbacks= [checkpoint_callback, early_stopping_callback, lr_monitor],
-        gpus = GPU,
-        accelerator=None,
-        progress_bar_refresh_rate = 30)
 
-    trainer.fit(model, data_module)
-    
-    # Model evaluation metrics
+Y_test = []
 
-    val_module, test_module = data_module.val_dataloader(), data_module.test_dataloader()
+# Combining grand truth (GT) batches as a list
+for item in tqdm(test_module):
+    Y_test.append(item[1].numpy())
     
-    # eval to turn off the dropout for prediction step
-    model.eval()
+# stacking GT batches 
+y_test = Y_test[0]
+for elm in tqdm(Y_test[1:]):
+    y_test = np.hstack((y_test, elm))
     
-    pred_val = trainer.predict(model, dataloaders = val_module) # 
-    pred_test = trainer.predict(model, dataloaders = test_module) # 
-    
-    Y_val = []
-    Y_test = []
 
-    for item in tqdm(val_module):
-        Y_val.append(item[1].numpy())
+P_test = []
+# Combining prediction batches as a list
+for item in tqdm(pred_test):
+    P_test.append(item)
+    
 
-    for item in tqdm(test_module):
-        Y_test.append(item[1].numpy())
-        
-    y_val = Y_val[0]
-    for elm in tqdm(Y_val[1:]):
-        y_val = np.hstack((y_val, elm))
 
-    y_test = Y_test[0]
-    for elm in tqdm(Y_test[1:]):
-        y_test = np.hstack((y_test, elm))
-        
-    P_val = []
-    P_test = []
+p_test = np.argmax(P_test[0], axis = 1)
+# stacking prediction batches 
+for elm in tqdm(P_test[1:]):
+    p_test = np.hstack((p_test, np.argmax(elm, axis = 1)))
+    
 
-    for item in tqdm(pred_val):
-        P_val.append(item)
+test_accuracy = accuracy(torch.from_numpy(p_test), torch.from_numpy(y_test))
 
-    for item in tqdm(pred_test):
-        P_test.append(item)
-        
-        
-    p_val = np.argmax(P_val[0], axis = 1)
-    for elm in tqdm(P_val[1:]):
 
-        p_val = np.hstack((p_val, np.argmax(elm, axis = 1)))
-
-    p_test = np.argmax(P_test[0], axis = 1)
-    for elm in tqdm(P_test[1:]):
-        p_test = np.hstack((p_test, np.argmax(elm, axis = 1)))
-        
-    val_accuracy = accuracy(torch.from_numpy(p_val), torch.from_numpy(y_val))
-    test_accuracy = accuracy(torch.from_numpy(p_test), torch.from_numpy(y_test))
-    
-    
-    acc_file = f"./pl_models/carvana/accuracy_ADAM_lr={lr}_bSize={batch_size}.txt"
-    with open(acc_file, 'w') as f:
-        f.write("val_accuracy: " + str(val_accuracy) + '\n')
-        f.write("test_accuracy: " + str(test_accuracy))
-    
-    confusion_matrix_val = pd.DataFrame(confusion_matrix(y_val, p_val))\
-    .rename(columns=idx2labels, index=idx2labels)
-    
-    filepathval = f"./pl_models/carvana/confusion_matrix_val_ADAM_lr={lr}_bSize={batch_size}.csv"
-    
-    confusion_matrix_val.to_csv(filepathval, index=False)
-    
-    confusion_matrix_test = pd.DataFrame(confusion_matrix(y_test, p_test))\
-    .rename(columns=idx2labels, index=idx2labels)
-    
-    filepathtest = f"./pl_models/carvana/confusion_matrix_test_ADAM_lr={lr}_bSize={batch_size}.csv"
-    confusion_matrix_test.to_csv(filepathtest, index=False)
-    
-    
-    test_report = classification_report(y_test, p_test, output_dict=True)
-    val_report = classification_report(y_val, p_val, output_dict=True)
-    
-    
-    dfVal = pd.DataFrame(val_report).transpose()
-    dfTest = pd.DataFrame(test_report).transpose()
-    
-    path_report_val = f"./pl_models/carvana/report_val_ADAM_lr={lr}_bSize={batch_size}.csv"
-    path_report_test = f"./pl_models/carvana/report_test_ADAM_lr={lr}_bSize={batch_size}.csv"
-    
-    dfVal.to_csv(path_report_val, index=False)
-    dfTest.to_csv(path_report_test, index=False)
+acc_file = "./pl_models/carvana/accuracy.txt"
+with open(acc_file, 'w') as f:
+    f.write("test_accuracy: " + str(test_accuracy))
 
 
 
-if __name__ == "__main__":
+confusion_matrix_test = pd.DataFrame(confusion_matrix(y_test, p_test))\
+.rename(columns=idx2labels, index=idx2labels)
 
-    lrList = [
-        5e-6,
-        ]
-    batch_sizeList = [
-                    8, 
-                    ]
+filepathtest = "./pl_models/carvana/confusion_matrix_test.csv"
+confusion_matrix_test.to_csv(filepathtest, index=False)
 
 
+test_report = classification_report(y_test, p_test, output_dict=True)
 
-    for lr in lrList:
-        for batch_size in batch_sizeList:
-            train(lr, batch_size)
+
+dfTest = pd.DataFrame(test_report).transpose()
+
+path_report_test = "./pl_models/carvana/report_test.csv"
+
+dfTest.to_csv(path_report_test, index=False)
+
+
+

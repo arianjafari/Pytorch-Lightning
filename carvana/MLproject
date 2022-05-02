@@ -1,0 +1,32 @@
+name: carvana
+
+conda_env: carvana.yaml
+
+entry_points:
+
+
+    train:
+        parameters: 
+            epoch :           {type: int, default: 30}
+            batch_size:       {type: int, default: 4}
+            csv_path:       {type: str, default: customer_chat_sample.csv}
+            checkpoint_path : {type: str, default: ./pl_models/Carvana/checkpoint}
+        
+        command: "python bertCarvana.py \
+                  --csv_path {csv_path} \
+                  --checkpoint_path {checkpoint_path} \
+                  --epoch {epoch} \
+                  --batch_size {batch_size}"
+
+    predict:
+        parameters: 
+            batch_size:       {type: int, default: 4}
+            csv_path:        {type: str, default: customer_chat_sample.csv}
+            checkpoint_path : {type: str, default: ./pl_models/Carvana/checkpoint}
+            best_model:       {type: str, default: epoch=15-step=24351.ckpt}
+        
+        command: "python predict.py \
+                  --csv_path {csv_path} \
+                  --checkpoint_path {checkpoint_path} \
+                  --best_model {best_model} \
+                  --batch_size {batch_size}"
